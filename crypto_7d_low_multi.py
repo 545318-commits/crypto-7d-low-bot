@@ -4,6 +4,8 @@ import smtplib
 from email.message import EmailMessage
 from datetime import datetime
 
+print("🚀 BOT STARTED")
+
 # ─────────────────────────────────────────────
 # COINS
 # ─────────────────────────────────────────────
@@ -17,14 +19,14 @@ COINS = [
 ]
 
 # ─────────────────────────────────────────────
-# EMAIL CONFIG
+# EMAIL CONFIG (FROM GITHUB SECRETS IN ACTIONS)
 # ─────────────────────────────────────────────
 EMAIL_FROM = "545318@gmail.com"
-EMAIL_PASS = "ywrvyvhrydxvjfuc"   # Gmail App Password
+EMAIL_PASS = "ywrvyvhrydxvjfuc"
 EMAIL_TO   = "545318@gmail.com"
 
 # ─────────────────────────────────────────────
-# STATE (prevents duplicate alerts on same low)
+# STATE
 # ─────────────────────────────────────────────
 last_low_event = {coin: None for coin in COINS}
 
@@ -34,23 +36,25 @@ last_low_event = {coin: None for coin in COINS}
 def get_price(symbol):
     url = f"https://api.exchange.coinbase.com/products/{symbol}/ticker"
     r = requests.get(url, timeout=10)
+    r.raise_for_status()
     return float(r.json()["price"])
 
 # ─────────────────────────────────────────────
-# TRUE 7-DAY LOW (DAILY CANDLES)
+# 7-DAY LOW
 # ─────────────────────────────────────────────
 def get_7d_low(symbol):
     url = f"https://api.exchange.coinbase.com/products/{symbol}/candles"
     params = {"granularity": 86400}
 
     r = requests.get(url, params=params, timeout=10)
+    r.raise_for_status()
     data = r.json()
 
-    lows = [c[1] for c in data]
+    lows = [c[1] for c in data if isinstance(c, list)]
     return min(lows)
 
 # ─────────────────────────────────────────────
-# EMAIL FUNCTION (FIXED)
+# EMAIL FUNCTION
 # ─────────────────────────────────────────────
 def send_email(symbol, price, low7):
     msg = EmailMessage()
@@ -58,27 +62,21 @@ def send_email(symbol, price, low7):
     msg["From"] = EMAIL_FROM
     msg["To"] = EMAIL_TO
 
-    body = (
+    msg.set_content(
         f"{symbol} hit a NEW 7-day LOW event\n\n"
         f"Price: {price}\n"
         f"7-Day Low: {low7}\n"
         f"Time (UTC): {datetime.utcnow()}"
     )
 
-    msg.set_content(body)
-
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
         smtp.login(EMAIL_FROM, EMAIL_PASS)
-        smtp.sendmail(
-            EMAIL_FROM,
-            EMAIL_TO,
-            msg.as_string()
-        )
+        smtp.send_message(msg)
 
 # ─────────────────────────────────────────────
-# MAIN LOOP
+# MAIN LOOP (SAFE FOR GITHUB ACTIONS)
 # ─────────────────────────────────────────────
-while True:
+def run():
     for coin in COINS:
         try:
             price = get_price(coin)
@@ -86,9 +84,7 @@ while True:
 
             print(f"{coin} | Price: {price} | 7D Low: {low7}")
 
-            # ONLY TRIGGER ON NEW LOWER LOW
             if last_low_event[coin] is None or low7 < last_low_event[coin]:
-
                 print(f"🚨 NEW 7D LOW EVENT: {coin}")
 
                 send_email(coin, price, low7)
@@ -98,4 +94,5 @@ while True:
         except Exception as e:
             print(f"{coin} error: {e}")
 
-    time.sleep(60)
+if __name__ == "__main__":
+    run()
