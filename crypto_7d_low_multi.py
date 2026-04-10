@@ -2,10 +2,11 @@ import requests
 import time
 import smtplib
 from email.message import EmailMessage
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 
-print("🚀 BOT STARTED")
-
+# ─────────────────────────────────────────────
+# COINS
+# ─────────────────────────────────────────────
 COINS = [
     "ETH-USD",
     "SOL-USD",
@@ -15,6 +16,9 @@ COINS = [
     "XTZ-USD"
 ]
 
+# ─────────────────────────────────────────────
+# EMAIL CONFIG
+# ─────────────────────────────────────────────
 EMAIL_FROM = "545318@gmail.com"
 EMAIL_PASS = "ywrvyvhrydxvjfuc"
 EMAIL_TO   = "545318@gmail.com"
@@ -22,82 +26,78 @@ EMAIL_TO   = "545318@gmail.com"
 # ─────────────────────────────────────────────
 # STATE
 # ─────────────────────────────────────────────
-week_low = {coin: None for coin in COINS}
-week_id  = None
-
-
-# ─────────────────────────────────────────────
-# WEEK RESET (MONDAY LOGIC)
-# ─────────────────────────────────────────────
-def get_week_id():
-    now = datetime.now(timezone.utc)
-    return now.isocalendar().week
-
+last_low = {coin: None for coin in COINS}
+price_history = {coin: [] for coin in COINS}
 
 # ─────────────────────────────────────────────
-# PRICE
+# PRICE FETCH
 # ─────────────────────────────────────────────
 def get_price(symbol):
     url = f"https://api.exchange.coinbase.com/products/{symbol}/ticker"
     r = requests.get(url, timeout=10)
-    r.raise_for_status()
     return float(r.json()["price"])
-
 
 # ─────────────────────────────────────────────
 # EMAIL
 # ─────────────────────────────────────────────
-def send_email(symbol, price, low):
+def send_email(symbol, price, low7):
     msg = EmailMessage()
-    msg["Subject"] = f"🟢 7D LOW UPDATE {symbol}"
+    msg["Subject"] = f"7-DAY LOW ALERT {symbol}"
     msg["From"] = EMAIL_FROM
     msg["To"] = EMAIL_TO
 
     msg.set_content(
-        f"{symbol} NEW WEEKLY LOW UPDATE\n\n"
+        f"{symbol} hit a new 7-day low\n\n"
         f"Price: {price}\n"
-        f"Current Week Low: {low}\n"
-        f"Time (UTC): {datetime.utcnow()}"
+        f"7-Day Low: {low7}\n"
+        f"Time: {datetime.utcnow()}"
     )
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
         smtp.login(EMAIL_FROM, EMAIL_PASS)
         smtp.send_message(msg)
 
-
 # ─────────────────────────────────────────────
 # MAIN LOOP
 # ─────────────────────────────────────────────
-while True:
-    try:
-        current_week = get_week_id()
+def run():
+    print("🚀 BOT STARTED")
 
-        # RESET WEEKLY STATE (MONDAY RESET LOGIC)
-        global week_id
-        if week_id is None or current_week != week_id:
-            print("🔄 NEW WEEK RESET")
-            week_id = current_week
-            week_low = {coin: None for coin in COINS}
+    while True:
+        try:
+            for coin in COINS:
+                price = get_price(coin)
 
-        for coin in COINS:
-            price = get_price(coin)
+                # store price history (keep last 7 days worth of samples)
+                price_history[coin].append((datetime.utcnow(), price))
 
-            print(f"{coin} | Price: {price}")
+                cutoff = datetime.utcnow() - timedelta(days=7)
 
-            # FIRST LOW
-            if week_low[coin] is None:
-                week_low[coin] = price
-                continue
+                # remove old data
+                price_history[coin] = [
+                    x for x in price_history[coin] if x[0] >= cutoff
+                ]
 
-            # NEW LOWER LOW
-            if price < week_low[coin]:
-                print(f"🚨 NEW WEEKLY LOW: {coin}")
+                # compute rolling 7-day low
+                low7 = min(x[1] for x in price_history[coin])
 
-                week_low[coin] = price
-                send_email(coin, price, price)
+                print(f"{coin} | Price: {price} | 7D Low: {low7}")
 
-        time.sleep(60)
+                # trigger ONLY on new break of 7D low
+                if last_low[coin] is None or price < last_low[coin]:
 
-    except Exception as e:
-        print("ERROR:", e)
-        time.sleep(10)
+                    # only alert if meaningful break
+                    if price <= low7:
+                        print(f"🚨 NEW 7D LOW: {coin}")
+                        send_email(coin, price, low7)
+                        last_low[coin] = price
+
+            time.sleep(60)
+
+        except Exception as e:
+            print("ERROR:", e)
+            time.sleep(10)
+
+# ─────────────────────────────────────────────
+if __name__ == "__main__":
+    run()
