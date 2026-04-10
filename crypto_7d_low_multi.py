@@ -2,13 +2,10 @@ import requests
 import time
 import smtplib
 from email.message import EmailMessage
-from datetime import datetime
+from datetime import datetime, timezone
 
 print("🚀 BOT STARTED")
 
-# ─────────────────────────────────────────────
-# COINS
-# ─────────────────────────────────────────────
 COINS = [
     "ETH-USD",
     "SOL-USD",
@@ -18,9 +15,6 @@ COINS = [
     "XTZ-USD"
 ]
 
-# ─────────────────────────────────────────────
-# EMAIL CONFIG (FROM GITHUB SECRETS IN ACTIONS)
-# ─────────────────────────────────────────────
 EMAIL_FROM = "545318@gmail.com"
 EMAIL_PASS = "ywrvyvhrydxvjfuc"
 EMAIL_TO   = "545318@gmail.com"
@@ -28,10 +22,20 @@ EMAIL_TO   = "545318@gmail.com"
 # ─────────────────────────────────────────────
 # STATE
 # ─────────────────────────────────────────────
-last_low_event = {coin: None for coin in COINS}
+week_low = {coin: None for coin in COINS}
+week_id  = None
+
 
 # ─────────────────────────────────────────────
-# COINBASE PRICE
+# WEEK RESET (MONDAY LOGIC)
+# ─────────────────────────────────────────────
+def get_week_id():
+    now = datetime.now(timezone.utc)
+    return now.isocalendar().week
+
+
+# ─────────────────────────────────────────────
+# PRICE
 # ─────────────────────────────────────────────
 def get_price(symbol):
     url = f"https://api.exchange.coinbase.com/products/{symbol}/ticker"
@@ -39,33 +43,20 @@ def get_price(symbol):
     r.raise_for_status()
     return float(r.json()["price"])
 
-# ─────────────────────────────────────────────
-# 7-DAY LOW
-# ─────────────────────────────────────────────
-def get_7d_low(symbol):
-    url = f"https://api.exchange.coinbase.com/products/{symbol}/candles"
-    params = {"granularity": 86400}
-
-    r = requests.get(url, params=params, timeout=10)
-    r.raise_for_status()
-    data = r.json()
-
-    lows = [c[1] for c in data if isinstance(c, list)]
-    return min(lows)
 
 # ─────────────────────────────────────────────
-# EMAIL FUNCTION
+# EMAIL
 # ─────────────────────────────────────────────
-def send_email(symbol, price, low7):
+def send_email(symbol, price, low):
     msg = EmailMessage()
-    msg["Subject"] = f"🟢 7-DAY LOW EVENT {symbol}"
+    msg["Subject"] = f"🟢 7D LOW UPDATE {symbol}"
     msg["From"] = EMAIL_FROM
     msg["To"] = EMAIL_TO
 
     msg.set_content(
-        f"{symbol} hit a NEW 7-day LOW event\n\n"
+        f"{symbol} NEW WEEKLY LOW UPDATE\n\n"
         f"Price: {price}\n"
-        f"7-Day Low: {low7}\n"
+        f"Current Week Low: {low}\n"
         f"Time (UTC): {datetime.utcnow()}"
     )
 
@@ -73,26 +64,40 @@ def send_email(symbol, price, low7):
         smtp.login(EMAIL_FROM, EMAIL_PASS)
         smtp.send_message(msg)
 
+
 # ─────────────────────────────────────────────
-# MAIN LOOP (SAFE FOR GITHUB ACTIONS)
+# MAIN LOOP
 # ─────────────────────────────────────────────
-def run():
-    for coin in COINS:
-        try:
+while True:
+    try:
+        current_week = get_week_id()
+
+        # RESET WEEKLY STATE (MONDAY RESET LOGIC)
+        global week_id
+        if week_id is None or current_week != week_id:
+            print("🔄 NEW WEEK RESET")
+            week_id = current_week
+            week_low = {coin: None for coin in COINS}
+
+        for coin in COINS:
             price = get_price(coin)
-            low7 = get_7d_low(coin)
 
-            print(f"{coin} | Price: {price} | 7D Low: {low7}")
+            print(f"{coin} | Price: {price}")
 
-            if last_low_event[coin] is None or low7 < last_low_event[coin]:
-                print(f"🚨 NEW 7D LOW EVENT: {coin}")
+            # FIRST LOW
+            if week_low[coin] is None:
+                week_low[coin] = price
+                continue
 
-                send_email(coin, price, low7)
+            # NEW LOWER LOW
+            if price < week_low[coin]:
+                print(f"🚨 NEW WEEKLY LOW: {coin}")
 
-                last_low_event[coin] = low7
+                week_low[coin] = price
+                send_email(coin, price, price)
 
-        except Exception as e:
-            print(f"{coin} error: {e}")
+        time.sleep(60)
 
-if __name__ == "__main__":
-    run()
+    except Exception as e:
+        print("ERROR:", e)
+        time.sleep(10)
