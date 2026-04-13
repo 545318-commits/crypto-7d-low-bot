@@ -10,10 +10,12 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
       - name: Cache state
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: state.json
-          key: bot-state
+          key: bot-state-v1
+          restore-keys: |
+            bot-state-v1
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
